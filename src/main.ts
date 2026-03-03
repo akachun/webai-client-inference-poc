@@ -9,8 +9,7 @@ type BenchResult = {
   error?: string;
 };
 
-const MODEL_URL =
-  'https://huggingface.co/onnxmodelzoo/squeezenet1.1-7/resolve/main/squeezenet1.1-7.onnx';
+const MODEL_URL = '/mnist-8.onnx';
 
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 
@@ -18,7 +17,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <h1>WebAI Client Inference PoC</h1>
-  <p>Model: mnist-8.onnx (remote, raw.githubusercontent.com)</p>
+  <p>Model: mnist-8.onnx (local /public)</p>
   <p>Benchmark providers: webgpu → wasm → webnn(optional)</p>
   <button id="run">Run Benchmark</button>
   <pre id="out"></pre>
@@ -47,12 +46,12 @@ function normalizeDims(dims: readonly (number | string)[] | undefined): number[]
   });
 }
 
-function makeRandomTensor(meta: ort.TensorMetadata): ort.Tensor {
-  const dims = normalizeDims(meta.dimensions);
+function makeRandomTensor(meta?: ort.TensorMetadata): ort.Tensor {
+  const dims = normalizeDims(meta?.dimensions);
   const size = dims.reduce((a, b) => a * b, 1);
 
-  const type = meta.type;
-  if (type === 'float16' || type === 'float32') {
+  const type = meta?.type;
+  if (type === 'float16' || type === 'float32' || !type) {
     const data = new Float32Array(size);
     for (let i = 0; i < size; i++) data[i] = Math.random();
     return new ort.Tensor('float32', data, dims);
@@ -78,7 +77,8 @@ async function benchProvider(provider: 'webgpu' | 'wasm' | 'webnn'): Promise<Ben
     const initMs = now() - t0;
 
     const inputName = session.inputNames[0];
-    const inputMeta = session.inputMetadata[inputName];
+    if (!inputName) throw new Error('No input name found in model');
+    const inputMeta = session.inputMetadata?.[inputName];
     const inputTensor = makeRandomTensor(inputMeta);
 
     const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
@@ -141,3 +141,8 @@ async function runBenchmark() {
 runBtn.addEventListener('click', () => {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 });
+
+const params = new URLSearchParams(window.location.search);
+if (params.get('autorun') === '1') {
+  runBenchmark().catch((e) => log(`error: ${String(e)}`));
+}
