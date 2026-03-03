@@ -1,25 +1,74 @@
 import * as ort from 'onnxruntime-web/all';
 
+type Provider = 'webgpu' | 'wasm' | 'webnn';
+
 type BenchResult = {
-  provider: string;
+  provider: Provider;
   ok: boolean;
   initMs?: number;
   firstRunMs?: number;
   avgRunMs?: number;
+  p95RunMs?: number;
   error?: string;
 };
 
-const MODEL_URL = '/mnist-8.onnx';
+type BenchConfig = {
+  name: string;
+  description: string;
+  modelUrl: string;
+  warmupRuns: number;
+  measuredRuns: number;
+  createTimeoutMs: number;
+  runTimeoutMs: number;
+  providers: Provider[];
+};
+
+const V1_CONFIG: BenchConfig = {
+  name: 'v1',
+  description: 'Smoke benchmark (MNIST tiny model)',
+  modelUrl: '/mnist-8.onnx',
+  warmupRuns: 0,
+  measuredRuns: 20,
+  createTimeoutMs: 12000,
+  runTimeoutMs: 10000,
+  providers: ['webgpu', 'wasm', 'webnn']
+};
+
+const V2_CONFIG: BenchConfig = {
+  name: 'v2',
+  description: 'Extended benchmark (SqueezeNet medium model + warmup + p95)',
+  modelUrl: '/squeezenet1.1-7.onnx',
+  warmupRuns: 3,
+  measuredRuns: 30,
+  createTimeoutMs: 25000,
+  runTimeoutMs: 15000,
+  providers: ['webgpu', 'wasm', 'webnn']
+};
+
+function getConfigFromPath(): BenchConfig {
+  const path = window.location.pathname.toLowerCase();
+  if (path.startsWith('/v2')) return V2_CONFIG;
+  return V1_CONFIG;
+}
+
+const config = getConfigFromPath();
 
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
-  <h1>WebAI Client Inference PoC</h1>
-  <p>Model: mnist-8.onnx (local /public)</p>
-  <p>Benchmark providers: webgpu → wasm → webnn(optional)</p>
-  <button id="run">Run Benchmark</button>
+  <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
+  <p>${config.description}</p>
+  <p>Model: ${config.modelUrl}</p>
+  <p>Providers: ${config.providers.join(' → ')}</p>
+  <p>Warmup: ${config.warmupRuns}, Measured runs: ${config.measuredRuns}</p>
+  <p>
+    <a href="/v1">/v1</a> |
+    <a href="/v2">/v2</a> |
+    <a href="${window.location.pathname}?autorun=1">autorun</a>
+  </p>
+  <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
 
@@ -34,14 +83,20 @@ function now() {
   return performance.now();
 }
 
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
 function normalizeDims(dims: readonly (number | string)[] | undefined): number[] {
   if (!dims || dims.length === 0) return [1, 1, 28, 28];
   return dims.map((d, i) => {
     if (typeof d === 'number' && d > 0) return d;
-    // fallback for symbolic dims
     if (i === 0) return 1;
-    if (i === 1) return 1;
-    if (i === 2 || i === 3) return 28;
+    if (i === 1) return 3;
+    if (i === 2 || i === 3) return 224;
     return 1;
   });
 }
@@ -79,43 +134,51 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
-async function benchProvider(provider: 'webgpu' | 'wasm' | 'webnn'): Promise<BenchResult> {
+async function benchProvider(provider: Provider): Promise<BenchResult> {
   try {
     const t0 = now();
     const session = await withTimeout(
-      ort.InferenceSession.create(MODEL_URL, {
+      ort.InferenceSession.create(config.modelUrl, {
         executionProviders: [provider],
         graphOptimizationLevel: 'all'
       }),
-      12000,
+      config.createTimeoutMs,
       `${provider} session create`
     );
     const initMs = now() - t0;
 
     const inputName = session.inputNames[0];
     if (!inputName) throw new Error('No input name found in model');
+
     const inputMeta = session.inputMetadata?.[inputName];
     const inputTensor = makeRandomTensor(inputMeta);
-
     const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
 
-    const r0 = now();
-    await withTimeout(session.run(feeds), 10000, `${provider} first run`);
-    const firstRunMs = now() - r0;
+    const firstT0 = now();
+    await withTimeout(session.run(feeds), config.runTimeoutMs, `${provider} first run`);
+    const firstRunMs = now() - firstT0;
 
-    const runs = 20;
-    const tRuns = now();
-    for (let i = 0; i < runs; i++) {
-      await withTimeout(session.run(feeds), 10000, `${provider} run ${i + 1}`);
+    for (let i = 0; i < config.warmupRuns; i++) {
+      await withTimeout(session.run(feeds), config.runTimeoutMs, `${provider} warmup ${i + 1}`);
     }
-    const avgRunMs = (now() - tRuns) / runs;
+
+    const runSamples: number[] = [];
+    for (let i = 0; i < config.measuredRuns; i++) {
+      const t = now();
+      await withTimeout(session.run(feeds), config.runTimeoutMs, `${provider} run ${i + 1}`);
+      runSamples.push(now() - t);
+    }
+
+    const avgRunMs = runSamples.reduce((a, b) => a + b, 0) / runSamples.length;
+    const p95RunMs = percentile(runSamples, 95);
 
     return {
       provider,
       ok: true,
       initMs,
       firstRunMs,
-      avgRunMs
+      avgRunMs,
+      p95RunMs
     };
   } catch (err) {
     return {
@@ -128,17 +191,18 @@ async function benchProvider(provider: 'webgpu' | 'wasm' | 'webnn'): Promise<Ben
 
 async function runBenchmark() {
   out.textContent = '';
+  log(`Mode: ${config.name}`);
   log(`UA: ${navigator.userAgent}`);
   log(`WebGPU API: ${'gpu' in navigator ? 'yes' : 'no'}`);
   log(`WebNN API: ${'ml' in navigator ? 'maybe (navigator.ml)' : 'no'}`);
   log('ORT loaded: onnxruntime-web/all');
-  log(`Model URL: ${MODEL_URL}`);
+  log(`Model URL: ${config.modelUrl}`);
+  log(`Warmup runs: ${config.warmupRuns}, Measured runs: ${config.measuredRuns}`);
   log('---');
 
-  const providers: Array<'webgpu' | 'wasm' | 'webnn'> = ['webgpu', 'wasm', 'webnn'];
   const results: BenchResult[] = [];
 
-  for (const p of providers) {
+  for (const p of config.providers) {
     log(`Running ${p} ...`);
     const r = await benchProvider(p);
     results.push(r);
@@ -146,7 +210,9 @@ async function runBenchmark() {
       log(`❌ ${p}: ${r.error}`);
       continue;
     }
-    log(`✅ ${p}: init=${r.initMs!.toFixed(1)}ms, first=${r.firstRunMs!.toFixed(1)}ms, avg=${r.avgRunMs!.toFixed(1)}ms`);
+    log(
+      `✅ ${p}: init=${r.initMs!.toFixed(1)}ms, first=${r.firstRunMs!.toFixed(1)}ms, avg=${r.avgRunMs!.toFixed(2)}ms, p95=${r.p95RunMs!.toFixed(2)}ms`
+    );
   }
 
   log('---');
