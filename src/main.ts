@@ -67,13 +67,29 @@ function makeRandomTensor(meta?: ort.TensorMetadata): ort.Tensor {
   return new ort.Tensor('float32', data, dims);
 }
 
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function benchProvider(provider: 'webgpu' | 'wasm' | 'webnn'): Promise<BenchResult> {
   try {
     const t0 = now();
-    const session = await ort.InferenceSession.create(MODEL_URL, {
-      executionProviders: [provider],
-      graphOptimizationLevel: 'all'
-    });
+    const session = await withTimeout(
+      ort.InferenceSession.create(MODEL_URL, {
+        executionProviders: [provider],
+        graphOptimizationLevel: 'all'
+      }),
+      12000,
+      `${provider} session create`
+    );
     const initMs = now() - t0;
 
     const inputName = session.inputNames[0];
@@ -84,13 +100,13 @@ async function benchProvider(provider: 'webgpu' | 'wasm' | 'webnn'): Promise<Ben
     const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
 
     const r0 = now();
-    await session.run(feeds);
+    await withTimeout(session.run(feeds), 10000, `${provider} first run`);
     const firstRunMs = now() - r0;
 
-    const runs = 5;
+    const runs = 20;
     const tRuns = now();
     for (let i = 0; i < runs; i++) {
-      await session.run(feeds);
+      await withTimeout(session.run(feeds), 10000, `${provider} run ${i + 1}`);
     }
     const avgRunMs = (now() - tRuns) / runs;
 
