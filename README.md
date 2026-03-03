@@ -1,6 +1,6 @@
 # webai-client-inference-poc
 
-WebGPU / Wasm / WebNN client-side inference PoC for column research.
+WebGPU / Wasm / WebNN client-side inference benchmark PoC for column research.
 
 ## Goals
 - Compare runtime paths in-browser: `webgpu`, `wasm`, `webnn` (if available)
@@ -31,3 +31,8 @@ pnpm dev
 - fallback: WASM
 - optional/experimental: WebNN
 
+
+
+## Current App
+- Runs same ONNX model on `webgpu`, `wasm`, `webnn` (best effort).
+- Prints init / first run / average latency metrics.
