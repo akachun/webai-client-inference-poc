@@ -16,6 +16,7 @@ type BenchConfig = {
   name: string;
   description: string;
   modelUrl: string;
+  inputFallbackDims: number[];
   warmupRuns: number;
   measuredRuns: number;
   createTimeoutMs: number;
@@ -27,6 +28,7 @@ const V1_CONFIG: BenchConfig = {
   name: 'v1',
   description: 'Smoke benchmark (MNIST tiny model)',
   modelUrl: '/mnist-8.onnx',
+  inputFallbackDims: [1, 1, 28, 28],
   warmupRuns: 0,
   measuredRuns: 20,
   createTimeoutMs: 12000,
@@ -38,6 +40,7 @@ const V2_CONFIG: BenchConfig = {
   name: 'v2',
   description: 'Extended benchmark (SqueezeNet medium model + warmup + p95)',
   modelUrl: '/squeezenet1.1-7.onnx',
+  inputFallbackDims: [1, 3, 224, 224],
   warmupRuns: 3,
   measuredRuns: 30,
   createTimeoutMs: 25000,
@@ -90,19 +93,26 @@ function percentile(values: number[], p: number): number {
   return sorted[idx];
 }
 
-function normalizeDims(dims: readonly (number | string)[] | undefined): number[] {
-  if (!dims || dims.length === 0) return [1, 1, 28, 28];
-  return dims.map((d, i) => {
+function normalizeDims(
+  dims: readonly (number | string)[] | undefined,
+  fallbackDims: number[]
+): number[] {
+  if (!dims || dims.length === 0) return fallbackDims;
+
+  const normalized = dims.map((d, i) => {
     if (typeof d === 'number' && d > 0) return d;
-    if (i === 0) return 1;
-    if (i === 1) return 3;
-    if (i === 2 || i === 3) return 224;
-    return 1;
+    return fallbackDims[i] ?? 1;
   });
+
+  if (normalized.some((v) => !Number.isFinite(v) || v <= 0)) {
+    return fallbackDims;
+  }
+
+  return normalized;
 }
 
-function makeRandomTensor(meta?: ort.TensorMetadata): ort.Tensor {
-  const dims = normalizeDims(meta?.dimensions);
+function makeRandomTensor(meta: ort.TensorMetadata | undefined, fallbackDims: number[]): ort.Tensor {
+  const dims = normalizeDims(meta?.dimensions, fallbackDims);
   const size = dims.reduce((a, b) => a * b, 1);
 
   const type = meta?.type;
@@ -151,7 +161,7 @@ async function benchProvider(provider: Provider): Promise<BenchResult> {
     if (!inputName) throw new Error('No input name found in model');
 
     const inputMeta = session.inputMetadata?.[inputName];
-    const inputTensor = makeRandomTensor(inputMeta);
+    const inputTensor = makeRandomTensor(inputMeta, config.inputFallbackDims);
     const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
 
     const firstT0 = now();
