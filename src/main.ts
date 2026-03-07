@@ -91,10 +91,18 @@ ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const baseUrl = (import.meta as any).env?.BASE_URL ?? '/';
 
+function resolveModelUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/')) return `${baseUrl}${url.slice(1)}`;
+  return `${baseUrl}${url}`;
+}
+
+const modelUrl = resolveModelUrl(config.modelUrl);
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
-  <p>Model: ${config.modelUrl}</p>
+  <p>Model: ${modelUrl}</p>
   <p>Providers: ${config.providers.join(' → ')}</p>
   <p>Warmup: ${config.warmupRuns}, Measured runs: ${config.measuredRuns}</p>
   ${mode === 'v3' ? `<p>V3 workloads (sequential inferences per sample): ${V3_WORKLOADS.join(', ')}</p>` : ''}
@@ -162,7 +170,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 
 async function createSession(provider: Provider) {
   return withTimeout(
-    ort.InferenceSession.create(config.modelUrl, {
+    ort.InferenceSession.create(modelUrl, {
       executionProviders: [provider],
       graphOptimizationLevel: 'all'
     }),
@@ -260,7 +268,7 @@ async function runBenchmark() {
   log(`WebGPU API: ${'gpu' in navigator ? 'yes' : 'no'}`);
   log(`WebNN API: ${'ml' in navigator ? 'maybe (navigator.ml)' : 'no'}`);
   log('ORT loaded: onnxruntime-web/all');
-  log(`Model URL: ${config.modelUrl}`);
+  log(`Model URL: ${modelUrl}`);
   log(`Warmup runs: ${config.warmupRuns}, Measured runs: ${config.measuredRuns}`);
   if (mode === 'v3') log(`Workloads: ${V3_WORKLOADS.join(', ')}`);
   log('---');
