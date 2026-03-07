@@ -72,8 +72,8 @@ const V3_WORKLOADS = [1, 4, 8, 16];
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
-  if (path.startsWith('/v3')) return 'v3';
-  if (path.startsWith('/v2')) return 'v2';
+  if (path.includes('/v3')) return 'v3';
+  if (path.includes('/v2')) return 'v2';
   return 'v1';
 }
 

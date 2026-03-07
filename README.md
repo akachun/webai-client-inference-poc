@@ -16,9 +16,19 @@ WebGPU / Wasm / WebNN client-side inference benchmark PoC for column research.
 
 ## Quick Start
 ```bash
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
+
+## Routes
+- `/v1` smoke benchmark
+- `/v2` extended benchmark
+- `/v3` practical stress benchmark
+
+## GitHub Pages
+This repo auto-deploys on push to `main` via GitHub Actions.
+Pages URL:
+- `https://akachun.github.io/webai-client-inference-poc/`
 
 ## Benchmark Plan
 1. Use same model and input across providers.
