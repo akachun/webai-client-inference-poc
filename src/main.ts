@@ -182,6 +182,7 @@ const v5Extra =
     ? `
   <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
     <p><strong>V5 Demo:</strong> Webcam YOLO detection (choose provider, then start).</p>
+    <p style="margin:4px 0 8px; color:#444;">Try: person, bottle, chair, dog, cat, car, bus, train, tvmonitor (VOC classes).</p>
     <label>Provider:
       <select id="v5Provider">
         <option value="webgpu">webgpu</option>
@@ -353,21 +354,35 @@ function nms(dets: Detection[], iouTh = 0.45): Detection[] {
   return outDets;
 }
 
-function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.3): Detection[] {
+function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.2): Detection[] {
   const data = output.data as Float32Array;
-  const dims = output.dims; // expected [1,125,13,13]
+  const dims = output.dims;
   if (dims.length !== 4) return [];
-  const C = dims[1];
-  const H = dims[2];
-  const W = dims[3];
-  if (C !== 125) return [];
+
+  // support both NCHW [1,125,13,13] and NHWC [1,13,13,125]
+  let C = 0;
+  let H = 0;
+  let W = 0;
+  let at: (c: number, y: number, x: number) => number;
+
+  if (dims[1] === 125) {
+    C = dims[1];
+    H = dims[2];
+    W = dims[3];
+    at = (c: number, y: number, x: number) => data[c * H * W + y * W + x];
+  } else if (dims[3] === 125) {
+    H = dims[1];
+    W = dims[2];
+    C = dims[3];
+    at = (c: number, y: number, x: number) => data[(y * W + x) * C + c];
+  } else {
+    return [];
+  }
 
   const classes = 20;
   const numAnchors = 5;
   const stride = classes + 5;
   const dets: Detection[] = [];
-
-  const at = (c: number, y: number, x: number) => data[c * H * W + y * W + x];
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -648,7 +663,7 @@ async function runYoloV5() {
 
     const outName = session.outputNames[0];
     const outTensor = outputs[outName] as ort.Tensor;
-    const dets = decodeTinyYoloV2(outTensor, 0.32);
+    const dets = decodeTinyYoloV2(outTensor, 0.2);
     drawDetections(overlay, dets);
 
     frameCount += 1;
@@ -657,7 +672,9 @@ async function runYoloV5() {
       fps = (frameCount * 1000) / (t - lastFpsTs);
       frameCount = 0;
       lastFpsTs = t;
-      metrics.textContent = `fps: ${fps.toFixed(1)}, infer: ${lastInferMs.toFixed(1)}ms, dets: ${dets.length}`;
+      const top = dets.length > 0 ? dets[0] : null;
+      const topLabel = top ? `${YOLO_CLASSES[top.cls] ?? top.cls}:${(top.score * 100).toFixed(1)}%` : '-';
+      metrics.textContent = `fps: ${fps.toFixed(1)}, infer: ${lastInferMs.toFixed(1)}ms, dets: ${dets.length}, top: ${topLabel}, outShape: [${outTensor.dims.join(',')}]`;
     }
 
     requestAnimationFrame(() => {
