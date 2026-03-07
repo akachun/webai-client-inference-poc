@@ -190,6 +190,17 @@ const v5Extra =
         <option value="webnn">webnn</option>
       </select>
     </label>
+    <label style="margin-left:8px;">Conf
+      <input id="v5Conf" type="range" min="0.05" max="0.8" step="0.01" value="0.3" />
+      <span id="v5ConfVal">0.30</span>
+    </label>
+    <label style="margin-left:8px;">IoU
+      <input id="v5Iou" type="range" min="0.1" max="0.8" step="0.01" value="0.35" />
+      <span id="v5IouVal">0.35</span>
+    </label>
+    <label style="margin-left:8px;">MaxBox
+      <input id="v5Max" type="number" min="1" max="50" step="1" value="10" style="width:56px;" />
+    </label>
     <button id="v5StartCam">Start Camera</button>
     <button id="v5StartDetect">Start Detection</button>
     <button id="v5StopDetect">Stop</button>
@@ -339,7 +350,7 @@ function iou(a: Detection, b: Detection): number {
   return union > 0 ? inter / union : 0;
 }
 
-function nms(dets: Detection[], iouTh = 0.45): Detection[] {
+function nms(dets: Detection[], iouTh = 0.35): Detection[] {
   const outDets: Detection[] = [];
   const byScore = [...dets].sort((a, b) => b.score - a.score);
   while (byScore.length) {
@@ -354,7 +365,7 @@ function nms(dets: Detection[], iouTh = 0.45): Detection[] {
   return outDets;
 }
 
-function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.08): Detection[] {
+function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.3, iouTh = 0.35, maxBoxes = 10): Detection[] {
   const data = output.data as Float32Array;
   const dims = output.dims;
   if (dims.length !== 4) return [];
@@ -428,7 +439,7 @@ function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.08): Detection[] {
     }
   }
 
-  return nms(dets, 0.45).slice(0, 30);
+  return nms(dets, iouTh).slice(0, maxBoxes);
 }
 
 function drawDetections(canvas: HTMLCanvasElement, dets: Detection[]) {
@@ -626,7 +637,12 @@ async function runYoloV5() {
   const overlay = document.querySelector<HTMLCanvasElement>('#v5Overlay');
   const metrics = document.querySelector<HTMLDivElement>('#v5Metrics');
   const providerSel = document.querySelector<HTMLSelectElement>('#v5Provider');
-  if (!video || !overlay || !metrics || !providerSel) throw new Error('V5 UI not found');
+  const confInput = document.querySelector<HTMLInputElement>('#v5Conf');
+  const iouInput = document.querySelector<HTMLInputElement>('#v5Iou');
+  const maxInput = document.querySelector<HTMLInputElement>('#v5Max');
+  const confVal = document.querySelector<HTMLSpanElement>('#v5ConfVal');
+  const iouVal = document.querySelector<HTMLSpanElement>('#v5IouVal');
+  if (!video || !overlay || !metrics || !providerSel || !confInput || !iouInput || !maxInput || !confVal || !iouVal) throw new Error('V5 UI not found');
 
   let session: ort.InferenceSession | null = null;
   let running = false;
@@ -634,6 +650,27 @@ async function runYoloV5() {
   let fps = 0;
   let frameCount = 0;
   let lastFpsTs = performance.now();
+  let confTh = Number(confInput.value) || 0.3;
+  let iouTh = Number(iouInput.value) || 0.35;
+  let maxBoxes = Number(maxInput.value) || 10;
+
+  const syncParamsUI = () => {
+    confVal.textContent = confTh.toFixed(2);
+    iouVal.textContent = iouTh.toFixed(2);
+  };
+  syncParamsUI();
+
+  confInput.addEventListener('input', () => {
+    confTh = Number(confInput.value) || confTh;
+    syncParamsUI();
+  });
+  iouInput.addEventListener('input', () => {
+    iouTh = Number(iouInput.value) || iouTh;
+    syncParamsUI();
+  });
+  maxInput.addEventListener('input', () => {
+    maxBoxes = Math.max(1, Math.min(50, Number(maxInput.value) || maxBoxes));
+  });
 
   const startCamBtn = document.querySelector<HTMLButtonElement>('#v5StartCam');
   const startDetBtn = document.querySelector<HTMLButtonElement>('#v5StartDetect');
@@ -664,7 +701,7 @@ async function runYoloV5() {
 
     const outName = session.outputNames[0];
     const outTensor = outputs[outName] as ort.Tensor;
-    const dets = decodeTinyYoloV2(outTensor, 0.08);
+    const dets = decodeTinyYoloV2(outTensor, confTh, iouTh, maxBoxes);
     drawDetections(overlay, dets);
 
     frameCount += 1;
@@ -675,7 +712,7 @@ async function runYoloV5() {
       lastFpsTs = t;
       const top = dets.length > 0 ? dets[0] : null;
       const topLabel = top ? `${YOLO_CLASSES[top.cls] ?? top.cls}:${(top.score * 100).toFixed(1)}%` : '-';
-      metrics.textContent = `fps: ${fps.toFixed(1)}, infer: ${lastInferMs.toFixed(1)}ms, dets: ${dets.length}, top: ${topLabel}, outShape: [${outTensor.dims.join(',')}]`;
+      metrics.textContent = `fps: ${fps.toFixed(1)}, infer: ${lastInferMs.toFixed(1)}ms, dets: ${dets.length}, top: ${topLabel}, conf:${confTh.toFixed(2)}, iou:${iouTh.toFixed(2)}, max:${maxBoxes}, outShape: [${outTensor.dims.join(',')}]`;
     }
 
     requestAnimationFrame(() => {
