@@ -89,6 +89,7 @@ const config = getConfig(mode);
 ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
+const baseUrl = (import.meta as any).env?.BASE_URL ?? '/';
 
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
@@ -98,9 +99,9 @@ app.innerHTML = `
   <p>Warmup: ${config.warmupRuns}, Measured runs: ${config.measuredRuns}</p>
   ${mode === 'v3' ? `<p>V3 workloads (sequential inferences per sample): ${V3_WORKLOADS.join(', ')}</p>` : ''}
   <p>
-    <a href="/v1">/v1</a> |
-    <a href="/v2">/v2</a> |
-    <a href="/v3">/v3</a> |
+    <a href="${baseUrl}v1">/v1</a> |
+    <a href="${baseUrl}v2">/v2</a> |
+    <a href="${baseUrl}v3">/v3</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
