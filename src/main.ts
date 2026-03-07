@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/all';
 
 type Provider = 'webgpu' | 'wasm' | 'webnn';
-type Mode = 'v1' | 'v2' | 'v3';
+type Mode = 'v1' | 'v2' | 'v3' | 'v4';
 
 type BenchResult = {
   provider: Provider;
@@ -68,10 +68,23 @@ const V3_CONFIG: BenchConfig = {
   providers: ['webgpu', 'wasm', 'webnn']
 };
 
+const V4_CONFIG: BenchConfig = {
+  name: 'v4',
+  description: 'Fast Style Transfer demo + provider benchmark',
+  modelUrl: '/mosaic-9.onnx',
+  inputFallbackDims: [1, 3, 224, 224],
+  warmupRuns: 1,
+  measuredRuns: 1,
+  createTimeoutMs: 30000,
+  runTimeoutMs: 30000,
+  providers: ['webgpu', 'wasm', 'webnn']
+};
+
 const V3_WORKLOADS = [1, 4, 8, 16];
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('/v4')) return 'v4';
   if (path.includes('/v3')) return 'v3';
   if (path.includes('/v2')) return 'v2';
   return 'v1';
@@ -80,6 +93,7 @@ function getModeFromPath(): Mode {
 function getConfig(mode: Mode): BenchConfig {
   if (mode === 'v2') return V2_CONFIG;
   if (mode === 'v3') return V3_CONFIG;
+  if (mode === 'v4') return V4_CONFIG;
   return V1_CONFIG;
 }
 
@@ -99,6 +113,22 @@ function resolveModelUrl(url: string): string {
 
 const modelUrl = resolveModelUrl(config.modelUrl);
 
+const v4Extra =
+  mode === 'v4'
+    ? `
+  <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+    <p><strong>V4 Demo:</strong> Upload an image and apply style transfer with each provider.</p>
+    <input id="imageInput" type="file" accept="image/*" />
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;">
+      <div><p>Input (resized)</p><canvas id="inputCanvas" width="224" height="224" style="border:1px solid #ccc;"></canvas></div>
+      <div><p>WebGPU</p><canvas id="out-webgpu" width="224" height="224" style="border:1px solid #ccc;"></canvas></div>
+      <div><p>WASM</p><canvas id="out-wasm" width="224" height="224" style="border:1px solid #ccc;"></canvas></div>
+      <div><p>WebNN</p><canvas id="out-webnn" width="224" height="224" style="border:1px solid #ccc;"></canvas></div>
+    </div>
+  </div>
+`
+    : '';
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
@@ -110,8 +140,10 @@ app.innerHTML = `
     <a href="${baseUrl}v1">/v1</a> |
     <a href="${baseUrl}v2">/v2</a> |
     <a href="${baseUrl}v3">/v3</a> |
+    <a href="${baseUrl}v4">/v4</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
+  ${v4Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
@@ -154,6 +186,59 @@ function makeRandomTensor(meta: ort.TensorMetadata | undefined, fallbackDims: nu
   const data = new Float32Array(size);
   for (let i = 0; i < size; i++) data[i] = Math.random();
   return new ort.Tensor('float32', data, dims);
+}
+
+function tensorFromCanvas(canvas: HTMLCanvasElement): ort.Tensor {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas context not available');
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height).data;
+
+  const data = new Float32Array(1 * 3 * height * width);
+  const plane = width * height;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const idx = y * width + x;
+      data[idx] = imageData[i];
+      data[plane + idx] = imageData[i + 1];
+      data[plane * 2 + idx] = imageData[i + 2];
+    }
+  }
+  return new ort.Tensor('float32', data, [1, 3, height, width]);
+}
+
+function renderTensorToCanvas(tensor: ort.Tensor, canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('canvas context not available');
+
+  const dims = tensor.dims;
+  if (dims.length !== 4) throw new Error(`Unexpected output dims: ${dims.join('x')}`);
+  const [, c, h, w] = dims;
+  if (c !== 3) throw new Error(`Expected 3 channels output, got ${c}`);
+
+  canvas.width = w;
+  canvas.height = h;
+
+  const data = tensor.data as Float32Array;
+  const img = ctx.createImageData(w, h);
+  const plane = w * h;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const out = idx * 4;
+      const r = Math.max(0, Math.min(255, Math.round(data[idx])));
+      const g = Math.max(0, Math.min(255, Math.round(data[plane + idx])));
+      const b = Math.max(0, Math.min(255, Math.round(data[plane * 2 + idx])));
+      img.data[out] = r;
+      img.data[out + 1] = g;
+      img.data[out + 2] = b;
+      img.data[out + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -232,7 +317,6 @@ async function runV3Stress(provider: Provider): Promise<StressRow[] | { error: s
     const inputTensor = makeRandomTensor(inputMeta, config.inputFallbackDims);
     const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
 
-    // warmup
     for (let i = 0; i < config.warmupRuns; i++) {
       await withTimeout(session.run(feeds), config.runTimeoutMs, `${provider} warmup ${i + 1}`);
     }
@@ -258,6 +342,50 @@ function printSummaryTable(rows: StressRow[]) {
   log('V3 Stress Summary (provider | workload | totalMs | perInferMs)');
   for (const r of rows) {
     log(`${r.provider.padEnd(6)} | ${String(r.workload).padStart(2)} | ${r.totalMs.toFixed(2).padStart(8)} | ${r.perInferMs.toFixed(3).padStart(8)}`);
+  }
+}
+
+async function runStyleTransferV4() {
+  out.textContent = '';
+  log(`Mode: ${config.name}`);
+  log(`UA: ${navigator.userAgent}`);
+  log(`WebGPU API: ${'gpu' in navigator ? 'yes' : 'no'}`);
+  log(`WebNN API: ${'ml' in navigator ? 'maybe (navigator.ml)' : 'no'}`);
+  log(`Model URL: ${modelUrl}`);
+  log('---');
+
+  const inputCanvas = document.querySelector<HTMLCanvasElement>('#inputCanvas');
+  if (!inputCanvas) throw new Error('V4 input canvas not found');
+
+  const inputTensor = tensorFromCanvas(inputCanvas);
+
+  for (const provider of config.providers) {
+    log(`Running ${provider} ...`);
+    try {
+      const outCanvas = document.querySelector<HTMLCanvasElement>(`#out-${provider}`);
+      if (!outCanvas) throw new Error(`Output canvas missing for ${provider}`);
+
+      const tInit0 = now();
+      const session = await createSession(provider);
+      const initMs = now() - tInit0;
+
+      const feedName = session.inputNames[0];
+      const tRun0 = now();
+      const outputs = await withTimeout(
+        session.run({ [feedName]: inputTensor }),
+        config.runTimeoutMs,
+        `${provider} style run`
+      );
+      const runMs = now() - tRun0;
+
+      const outName = session.outputNames[0];
+      const outTensor = outputs[outName] as ort.Tensor;
+      renderTensorToCanvas(outTensor, outCanvas);
+
+      log(`✅ ${provider}: init=${initMs.toFixed(1)}ms, styleRun=${runMs.toFixed(1)}ms`);
+    } catch (e) {
+      log(`❌ ${provider}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 }
 
@@ -306,11 +434,42 @@ async function runBenchmark() {
   log(JSON.stringify(results, null, 2));
 }
 
+if (mode === 'v4') {
+  const imageInput = document.querySelector<HTMLInputElement>('#imageInput');
+  const inputCanvas = document.querySelector<HTMLCanvasElement>('#inputCanvas');
+  if (imageInput && inputCanvas) {
+    const ctx = inputCanvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#f0f0f0';
+      ctx.fillRect(0, 0, inputCanvas.width, inputCanvas.height);
+      ctx.fillStyle = '#333';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('Upload image', 60, 112);
+    }
+
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files?.[0];
+      if (!file || !inputCanvas) return;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const c = inputCanvas.getContext('2d');
+        if (!c) return;
+        c.clearRect(0, 0, inputCanvas.width, inputCanvas.height);
+        c.drawImage(img, 0, 0, inputCanvas.width, inputCanvas.height);
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    });
+  }
+}
+
 runBtn.addEventListener('click', () => {
-  runBenchmark().catch((e) => log(`error: ${String(e)}`));
+  const fn = mode === 'v4' ? runStyleTransferV4 : runBenchmark;
+  fn().catch((e) => log(`error: ${String(e)}`));
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('autorun') === '1') {
+if (params.get('autorun') === '1' && mode !== 'v4') {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 }
