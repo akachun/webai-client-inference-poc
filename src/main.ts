@@ -354,7 +354,7 @@ function nms(dets: Detection[], iouTh = 0.45): Detection[] {
   return outDets;
 }
 
-function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.2): Detection[] {
+function decodeTinyYoloV2(output: ort.Tensor, scoreTh = 0.08): Detection[] {
   const data = output.data as Float32Array;
   const dims = output.dims;
   if (dims.length !== 4) return [];
@@ -468,9 +468,10 @@ function frameToYoloTensor(video: HTMLVideoElement): ort.Tensor {
 
   for (let i = 0; i < plane; i++) {
     const p = i * 4;
-    chw[i] = pixels[p] / 255;
-    chw[plane + i] = pixels[p + 1] / 255;
-    chw[plane * 2 + i] = pixels[p + 2] / 255;
+    // tiny-yolov2 model here expects raw 0..255 RGB values
+    chw[i] = pixels[p];
+    chw[plane + i] = pixels[p + 1];
+    chw[plane * 2 + i] = pixels[p + 2];
   }
 
   return new ort.Tensor('float32', chw, [1, 3, 416, 416]);
@@ -663,7 +664,7 @@ async function runYoloV5() {
 
     const outName = session.outputNames[0];
     const outTensor = outputs[outName] as ort.Tensor;
-    const dets = decodeTinyYoloV2(outTensor, 0.2);
+    const dets = decodeTinyYoloV2(outTensor, 0.08);
     drawDetections(overlay, dets);
 
     frameCount += 1;
