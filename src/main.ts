@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/all';
 
 type Provider = 'webgpu' | 'wasm' | 'webnn';
-type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5';
+type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6';
 
 type BenchResult = {
   provider: Provider;
@@ -92,6 +92,18 @@ const V5_CONFIG: BenchConfig = {
   providers: ['webgpu', 'wasm', 'webnn']
 };
 
+const V6_CONFIG: BenchConfig = {
+  name: 'v6',
+  description: 'Chrome Built-in AI (Gemini Nano) probe + latency PoC',
+  modelUrl: '/mnist-8.onnx',
+  inputFallbackDims: [1, 1, 28, 28],
+  warmupRuns: 0,
+  measuredRuns: 1,
+  createTimeoutMs: 12000,
+  runTimeoutMs: 12000,
+  providers: ['wasm']
+};
+
 const V3_WORKLOADS = [1, 4, 8, 16];
 
 const YOLO_CLASSES = [
@@ -130,6 +142,7 @@ type Detection = {
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('/v6')) return 'v6';
   if (path.includes('/v5')) return 'v5';
   if (path.includes('/v4')) return 'v4';
   if (path.includes('/v3')) return 'v3';
@@ -142,6 +155,7 @@ function getConfig(mode: Mode): BenchConfig {
   if (mode === 'v3') return V3_CONFIG;
   if (mode === 'v4') return V4_CONFIG;
   if (mode === 'v5') return V5_CONFIG;
+  if (mode === 'v6') return V6_CONFIG;
   return V1_CONFIG;
 }
 
@@ -213,6 +227,18 @@ const v5Extra =
 `
     : '';
 
+const v6Extra =
+  mode === 'v6'
+    ? `
+  <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+    <p><strong>V6 Demo:</strong> Chrome Built-in AI (Gemini Nano) probe.</p>
+    <p style="margin:4px 0 8px; color:#444;">Runs a simple Korean summary task and reports latency/availability.</p>
+    <textarea id="v6Input" rows="4" style="width:100%;">클라이언트 사이드 AI PoC를 통해 WebGPU, WASM, WebNN 성능을 비교했습니다. 초기 지연은 WebGPU와 WebNN이 더 클 수 있지만, 반복 추론에서는 유리할 수 있습니다.</textarea>
+    <button id="v6Run">Run Built-in AI Test</button>
+  </div>
+`
+    : '';
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
@@ -226,10 +252,12 @@ app.innerHTML = `
     <a href="${baseUrl}v3">/v3</a> |
     <a href="${baseUrl}v4">/v4</a> |
     <a href="${baseUrl}v5">/v5</a> |
+    <a href="${baseUrl}v6">/v6</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
   ${v4Extra}
   ${v5Extra}
+  ${v6Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
@@ -757,6 +785,62 @@ async function runYoloV5() {
   log('V5 ready. Click Start Camera, then Start Detection.');
 }
 
+async function runBuiltInAIV6() {
+  out.textContent = '';
+  const input = document.querySelector<HTMLTextAreaElement>('#v6Input')?.value?.trim() || '';
+
+  log('Mode: v6');
+  log(`UA: ${navigator.userAgent}`);
+  log('--- Built-in AI capability probe ---');
+
+  const w = window as any;
+  const hasAI = typeof w.ai !== 'undefined';
+  const hasLanguageModel = !!w.ai?.languageModel;
+  const hasSummarizer = !!w.ai?.summarizer;
+
+  log(`window.ai: ${hasAI ? 'yes' : 'no'}`);
+  log(`ai.languageModel: ${hasLanguageModel ? 'yes' : 'no'}`);
+  log(`ai.summarizer: ${hasSummarizer ? 'yes' : 'no'}`);
+
+  if (!hasAI || (!hasLanguageModel && !hasSummarizer)) {
+    log('❌ Built-in AI API not available in this environment.');
+    log('Tip: use latest Chrome and enable built-in AI related flags/origin trial if needed.');
+    return;
+  }
+
+  try {
+    let outputText = '';
+
+    if (hasSummarizer) {
+      log('Using ai.summarizer path...');
+      const t0 = now();
+      const summarizer = await w.ai.summarizer.create?.({
+        type: 'tl;dr',
+        format: 'plain-text',
+        length: 'short'
+      });
+      const t1 = now();
+      outputText = await summarizer.summarize(input);
+      const t2 = now();
+      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, summarize: ${(t2 - t1).toFixed(1)}ms`);
+    } else {
+      log('Using ai.languageModel path...');
+      const t0 = now();
+      const session = await w.ai.languageModel.create?.();
+      const t1 = now();
+      const prompt = `다음 문장을 한국어로 2문장 이내로 요약해 주세요.\n\n${input}`;
+      outputText = await session.prompt(prompt);
+      const t2 = now();
+      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, prompt: ${(t2 - t1).toFixed(1)}ms`);
+    }
+
+    log('--- Output ---');
+    log(outputText || '(empty)');
+  } catch (e) {
+    log(`❌ Built-in AI execution failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 async function runBenchmark() {
   out.textContent = '';
   log(`Mode: ${config.name}`);
@@ -836,6 +920,13 @@ if (mode === 'v5') {
   runYoloV5().catch((e) => log(`error: ${String(e)}`));
 }
 
+if (mode === 'v6') {
+  const v6RunBtn = document.querySelector<HTMLButtonElement>('#v6Run');
+  v6RunBtn?.addEventListener('click', () => {
+    runBuiltInAIV6().catch((e) => log(`error: ${String(e)}`));
+  });
+}
+
 runBtn.addEventListener('click', () => {
   if (mode === 'v4') {
     runStyleTransferV4().catch((e) => log(`error: ${String(e)}`));
@@ -845,10 +936,14 @@ runBtn.addEventListener('click', () => {
     log('Use V5 camera controls (Start Camera / Start Detection).');
     return;
   }
+  if (mode === 'v6') {
+    runBuiltInAIV6().catch((e) => log(`error: ${String(e)}`));
+    return;
+  }
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5') {
+if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6') {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 }
