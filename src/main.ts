@@ -791,6 +791,10 @@ async function runBuiltInAIV6() {
 
   log('Mode: v6');
   log(`UA: ${navigator.userAgent}`);
+  log('Experiment: Built-in AI API availability + latency probe');
+  log('Task: Korean short summarization (2 sentences)');
+  log(`Input length: ${input.length} chars`);
+  log('Note: This is API-level PoC (not direct WASM/WebGPU/WebNN backend comparison).');
   log('--- Built-in AI capability probe (new API surface first) ---');
 
   const w = window as any;
@@ -842,7 +846,11 @@ async function runBuiltInAIV6() {
       const t1 = now();
       outputText = await summarizer.summarize(input);
       const t2 = now();
-      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, summarize: ${(t2 - t1).toFixed(1)}ms`);
+      log('--- V6 Result (Built-in AI) ---');
+      log(`API path: Summarizer`);
+      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
+      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
+      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
     } else if (w.LanguageModel?.create) {
       log('Using LanguageModel API path...');
       const t0 = now();
@@ -850,7 +858,11 @@ async function runBuiltInAIV6() {
       const t1 = now();
       outputText = await session.prompt(summarizePrompt);
       const t2 = now();
-      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, prompt: ${(t2 - t1).toFixed(1)}ms`);
+      log('--- V6 Result (Built-in AI) ---');
+      log(`API path: LanguageModel`);
+      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
+      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
+      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
     } else if (w.Writer?.create) {
       log('Using Writer API path...');
       const t0 = now();
@@ -858,7 +870,11 @@ async function runBuiltInAIV6() {
       const t1 = now();
       outputText = await writer.write(`다음 내용을 한국어 2문장으로 요약해 주세요: ${input}`);
       const t2 = now();
-      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, write: ${(t2 - t1).toFixed(1)}ms`);
+      log('--- V6 Result (Built-in AI) ---');
+      log(`API path: Writer`);
+      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
+      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
+      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
     } else if (w.ai?.summarizer?.create) {
       log('Using legacy ai.summarizer path...');
       const t0 = now();
@@ -866,7 +882,11 @@ async function runBuiltInAIV6() {
       const t1 = now();
       outputText = await summarizer.summarize(input);
       const t2 = now();
-      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, summarize: ${(t2 - t1).toFixed(1)}ms`);
+      log('--- V6 Result (Built-in AI) ---');
+      log(`API path: legacy ai.summarizer`);
+      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
+      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
+      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
     } else if (w.ai?.languageModel?.create) {
       log('Using legacy ai.languageModel path...');
       const t0 = now();
@@ -874,7 +894,11 @@ async function runBuiltInAIV6() {
       const t1 = now();
       outputText = await session.prompt(summarizePrompt);
       const t2 = now();
-      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, prompt: ${(t2 - t1).toFixed(1)}ms`);
+      log('--- V6 Result (Built-in AI) ---');
+      log(`API path: legacy ai.languageModel`);
+      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
+      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
+      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
     } else {
       log('❌ API surface is partially exposed, but no callable create() path found.');
       return;
@@ -882,6 +906,10 @@ async function runBuiltInAIV6() {
 
     log('--- Output ---');
     log(outputText || '(empty)');
+
+    log('--- Comparison Hint ---');
+    log('- Compare this V6 latency with V2/V3 summary-like tasks manually.');
+    log('- V6 is API-level benchmark (Built-in AI), V2/V3 are runtime/backend-level benchmark (ORT).');
   } catch (e) {
     log(`❌ Built-in AI execution failed: ${e instanceof Error ? e.message : String(e)}`);
   }
