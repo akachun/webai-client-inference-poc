@@ -349,7 +349,7 @@ app.innerHTML = `
   ${v8Extra}
   ${v9Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
-  <pre id="out"></pre>
+  <pre id="out" style="margin-top:10px; padding:12px; background:#111; color:#eaeaea; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; max-height:420px; overflow:auto; line-height:1.45;"></pre>
 `;
 
 const out = document.querySelector<HTMLPreElement>('#out')!;
