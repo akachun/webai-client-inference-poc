@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/all';
 
 type Provider = 'webgpu' | 'wasm' | 'webnn';
-type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6';
+type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6' | 'v7';
 
 type BenchResult = {
   provider: Provider;
@@ -104,6 +104,18 @@ const V6_CONFIG: BenchConfig = {
   providers: ['wasm']
 };
 
+const V7_CONFIG: BenchConfig = {
+  name: 'v7',
+  description: 'Unified comparison: ONNX runtime paths + Built-in AI',
+  modelUrl: '/mnist-8.onnx',
+  inputFallbackDims: [1, 1, 28, 28],
+  warmupRuns: 0,
+  measuredRuns: 10,
+  createTimeoutMs: 12000,
+  runTimeoutMs: 12000,
+  providers: ['wasm', 'webgpu', 'webnn']
+};
+
 const V3_WORKLOADS = [1, 4, 8, 16];
 
 const YOLO_CLASSES = [
@@ -142,6 +154,7 @@ type Detection = {
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('/v7')) return 'v7';
   if (path.includes('/v6')) return 'v6';
   if (path.includes('/v5')) return 'v5';
   if (path.includes('/v4')) return 'v4';
@@ -156,6 +169,7 @@ function getConfig(mode: Mode): BenchConfig {
   if (mode === 'v4') return V4_CONFIG;
   if (mode === 'v5') return V5_CONFIG;
   if (mode === 'v6') return V6_CONFIG;
+  if (mode === 'v7') return V7_CONFIG;
   return V1_CONFIG;
 }
 
@@ -240,6 +254,17 @@ const v6Extra =
 `
     : '';
 
+const v7Extra =
+  mode === 'v7'
+    ? `
+  <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+    <p><strong>V7 Demo:</strong> Unified test (ONNX runtime paths + Built-in AI).</p>
+    <p style="margin:4px 0 8px; color:#444;">ONNX paths use same ONNX model runtime probe; Built-in AI uses summarization task.</p>
+    <button id="v7Run">Run Unified Comparison</button>
+  </div>
+`
+    : '';
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
@@ -254,11 +279,13 @@ app.innerHTML = `
     <a href="${baseUrl}v4">/v4</a> |
     <a href="${baseUrl}v5">/v5</a> |
     <a href="${baseUrl}v6">/v6</a> |
+    <a href="${baseUrl}v7">/v7</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
   ${v4Extra}
   ${v5Extra}
   ${v6Extra}
+  ${v7Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
@@ -958,6 +985,67 @@ async function runBuiltInAIV6Batch() {
   log(`p95 total latency: ${p95.toFixed(1)}ms`);
 }
 
+async function runUnifiedV7() {
+  out.textContent = '';
+  log('Mode: v7');
+  log('Experiment: Unified comparison across ONNX runtime paths and Built-in AI');
+  log('Note: ONNX and Built-in AI are different model/API layers, so interpret as practical-path comparison.');
+  log('--- ONNX runtime path probe ---');
+
+  const onnxProviders: Provider[] = ['wasm', 'webgpu', 'webnn'];
+  const onnxRows: Array<{ provider: string; ok: boolean; latency?: number; error?: string }> = [];
+  for (const p of onnxProviders) {
+    const r = await benchProvider(p);
+    if (r.ok) {
+      onnxRows.push({ provider: p, ok: true, latency: r.avgRunMs });
+      log(`✅ ONNX ${p}: avg=${(r.avgRunMs ?? 0).toFixed(2)}ms`);
+    } else {
+      onnxRows.push({ provider: p, ok: false, error: r.error });
+      log(`❌ ONNX ${p}: ${r.error}`);
+    }
+  }
+
+  log('--- Built-in AI 10-case batch ---');
+  const cases = [
+    '클라이언트 AI는 네트워크 없이도 일부 추론이 가능해 프라이버시와 응답성을 개선할 수 있습니다. 다만 기기 성능과 브라우저 지원 편차를 고려해야 합니다.',
+    'WASM은 호환성이 높고 안정적이지만 대규모 반복 추론에서는 GPU 계열 대비 한계가 나타날 수 있습니다.',
+    'WebGPU는 초기 준비 비용이 있지만 반복 추론에서 지연시간을 낮출 수 있는 가능성이 큽니다.',
+    'WebNN은 플랫폼 의존성이 존재하지만 일부 환경에서 매우 빠른 추론 경로를 제공할 수 있습니다.',
+    'Built-in AI는 구현 속도가 빠르지만 API 노출 여부와 기능 롤아웃 상태를 먼저 확인해야 합니다.',
+    '온디바이스 추론은 서버 비용 절감에 도움이 되지만, 모델 배포 크기와 업데이트 전략이 중요합니다.',
+    '프론트엔드 팀은 정확도뿐 아니라 지연시간, 실패율, 지원 범위를 함께 측정해야 합니다.',
+    'PoC 단계에서는 단일 성능 수치보다 재현 가능한 측정 절차를 먼저 확립하는 것이 좋습니다.',
+    '요약 태스크 비교에서는 출력 형식 제약을 동일하게 맞춰야 실사용 관점 해석이 가능합니다.',
+    '최종 도입 판단은 모델 성능보다도 운영 난이도와 사용자 경험을 함께 고려해야 합니다.'
+  ];
+
+  const builtRows: Array<{ ok: boolean; totalMs?: number; path?: string; err?: string }> = [];
+  for (let i = 0; i < cases.length; i++) {
+    try {
+      const r = await runBuiltInAISingle(cases[i], false);
+      builtRows.push({ ok: true, totalMs: r.totalMs, path: r.apiPath });
+      log(`✅ Built-in case ${i + 1}: ${r.totalMs.toFixed(1)}ms (${r.apiPath})`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      builtRows.push({ ok: false, err: msg });
+      log(`❌ Built-in case ${i + 1}: ${msg}`);
+    }
+  }
+
+  const okBuilt = builtRows.filter((r) => r.ok && typeof r.totalMs === 'number') as Array<{ ok: true; totalMs: number; path?: string }>;
+  const builtAvg = okBuilt.length ? okBuilt.reduce((a, b) => a + b.totalMs, 0) / okBuilt.length : 0;
+  const builtSorted = okBuilt.map((r) => r.totalMs).sort((a, b) => a - b);
+  const builtP95 = builtSorted.length ? builtSorted[Math.max(0, Math.ceil(builtSorted.length * 0.95) - 1)] : 0;
+
+  log('--- V7 Unified Summary ---');
+  for (const row of onnxRows) {
+    if (row.ok) log(`ONNX-${row.provider}: success, avg=${(row.latency ?? 0).toFixed(2)}ms`);
+    else log(`ONNX-${row.provider}: fail, reason=${row.error}`);
+  }
+  log(`Built-in AI: success=${okBuilt.length}/${builtRows.length}, avg=${builtAvg.toFixed(1)}ms, p95=${builtP95.toFixed(1)}ms, path=${okBuilt[0]?.path ?? '-'}`);
+  log('Interpretation: ONNX rows compare runtime backends on one model, Built-in row compares API-level summarization path.');
+}
+
 async function runBenchmark() {
   out.textContent = '';
   log(`Mode: ${config.name}`);
@@ -1048,6 +1136,13 @@ if (mode === 'v6') {
   });
 }
 
+if (mode === 'v7') {
+  const v7RunBtn = document.querySelector<HTMLButtonElement>('#v7Run');
+  v7RunBtn?.addEventListener('click', () => {
+    runUnifiedV7().catch((e) => log(`error: ${String(e)}`));
+  });
+}
+
 runBtn.addEventListener('click', () => {
   if (mode === 'v4') {
     runStyleTransferV4().catch((e) => log(`error: ${String(e)}`));
@@ -1061,10 +1156,14 @@ runBtn.addEventListener('click', () => {
     runBuiltInAIV6().catch((e) => log(`error: ${String(e)}`));
     return;
   }
+  if (mode === 'v7') {
+    runUnifiedV7().catch((e) => log(`error: ${String(e)}`));
+    return;
+  }
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6') {
+if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6' && mode !== 'v7') {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 }
