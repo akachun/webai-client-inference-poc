@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/all';
 
 type Provider = 'webgpu' | 'wasm' | 'webnn';
-type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6' | 'v7';
+type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6' | 'v7' | 'v8';
 
 type BenchResult = {
   provider: Provider;
@@ -116,6 +116,18 @@ const V7_CONFIG: BenchConfig = {
   providers: ['wasm', 'webgpu', 'webnn']
 };
 
+const V8_CONFIG: BenchConfig = {
+  name: 'v8',
+  description: 'Tokenizer + ONNX summarization vs Built-in AI summarization',
+  modelUrl: '/mnist-8.onnx',
+  inputFallbackDims: [1, 1, 28, 28],
+  warmupRuns: 0,
+  measuredRuns: 10,
+  createTimeoutMs: 12000,
+  runTimeoutMs: 12000,
+  providers: ['wasm']
+};
+
 const V3_WORKLOADS = [1, 4, 8, 16];
 
 const YOLO_CLASSES = [
@@ -154,6 +166,7 @@ type Detection = {
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('/v8')) return 'v8';
   if (path.includes('/v7')) return 'v7';
   if (path.includes('/v6')) return 'v6';
   if (path.includes('/v5')) return 'v5';
@@ -170,6 +183,7 @@ function getConfig(mode: Mode): BenchConfig {
   if (mode === 'v5') return V5_CONFIG;
   if (mode === 'v6') return V6_CONFIG;
   if (mode === 'v7') return V7_CONFIG;
+  if (mode === 'v8') return V8_CONFIG;
   return V1_CONFIG;
 }
 
@@ -265,6 +279,20 @@ const v7Extra =
 `
     : '';
 
+const v8Extra =
+  mode === 'v8'
+    ? `
+  <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+    <p><strong>V8 Demo:</strong> Tokenizer+ONNX summarization vs Built-in AI summarization.</p>
+    <p style="margin:4px 0 8px; color:#444;">English summary model for fast setup: Xenova/distilbart-cnn-6-6</p>
+    <textarea id="v8Input" rows="5" style="width:100%;">Client-side AI allows inference directly in browser, improving privacy and responsiveness. However, runtime compatibility and model size can affect startup latency. Teams should evaluate both raw latency and operational complexity when choosing between ONNX runtime paths and built-in browser AI APIs.</textarea>
+    <button id="v8OnnxRun">Run ONNX Summary</button>
+    <button id="v8BuiltInRun" style="margin-left:8px;">Run Built-in Summary</button>
+    <button id="v8CompareRun" style="margin-left:8px;">Run 10-case Unified Compare</button>
+  </div>
+`
+    : '';
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
@@ -280,12 +308,14 @@ app.innerHTML = `
     <a href="${baseUrl}v5">/v5</a> |
     <a href="${baseUrl}v6">/v6</a> |
     <a href="${baseUrl}v7">/v7</a> |
+    <a href="${baseUrl}v8">/v8</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
   ${v4Extra}
   ${v5Extra}
   ${v6Extra}
   ${v7Extra}
+  ${v8Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
@@ -1046,6 +1076,128 @@ async function runUnifiedV7() {
   log('Interpretation: ONNX rows compare runtime backends on one model, Built-in row compares API-level summarization path.');
 }
 
+let v8OnnxSummarizer: any = null;
+
+async function getV8OnnxSummarizer() {
+  if (v8OnnxSummarizer) return v8OnnxSummarizer;
+  const t = await import('@xenova/transformers');
+  t.env.allowLocalModels = false;
+  t.env.useBrowserCache = true;
+  v8OnnxSummarizer = await t.pipeline('summarization', 'Xenova/distilbart-cnn-6-6');
+  return v8OnnxSummarizer;
+}
+
+async function runV8OnnxSingle(input: string) {
+  const t0 = now();
+  const pipe = await getV8OnnxSummarizer();
+  const t1 = now();
+  const out = await pipe(input, { max_new_tokens: 60, min_new_tokens: 15 });
+  const t2 = now();
+  const text = Array.isArray(out) ? out[0]?.summary_text ?? '' : out?.summary_text ?? '';
+  return { createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output: text };
+}
+
+async function runV8OnnxSummary() {
+  out.textContent = '';
+  const input = document.querySelector<HTMLTextAreaElement>('#v8Input')?.value?.trim() || '';
+  log('Mode: v8 (ONNX summarization)');
+  log(`Input length: ${input.length} chars`);
+  try {
+    const r = await runV8OnnxSingle(input);
+    log('--- Result ---');
+    log('Path: Tokenizer + ONNX (transformers.js + ORT)');
+    log(`create latency: ${r.createMs.toFixed(1)}ms`);
+    log(`inference latency: ${r.inferMs.toFixed(1)}ms`);
+    log(`total latency: ${r.totalMs.toFixed(1)}ms`);
+    log('--- Output ---');
+    log(r.output || '(empty)');
+  } catch (e) {
+    log(`❌ ONNX summarization failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function runV8BuiltInSummary() {
+  out.textContent = '';
+  const input = document.querySelector<HTMLTextAreaElement>('#v8Input')?.value?.trim() || '';
+  log('Mode: v8 (Built-in AI summarization)');
+  log(`Input length: ${input.length} chars`);
+  try {
+    const r = await runBuiltInAISingle(input, true);
+    log('--- Result ---');
+    log(`Path: Built-in AI (${r.apiPath})`);
+    log(`create latency: ${r.createMs.toFixed(1)}ms`);
+    log(`inference latency: ${r.inferMs.toFixed(1)}ms`);
+    log(`total latency: ${r.totalMs.toFixed(1)}ms`);
+    log('--- Output ---');
+    log(r.output || '(empty)');
+  } catch (e) {
+    log(`❌ Built-in summarization failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function runV8UnifiedCompare() {
+  out.textContent = '';
+  log('Mode: v8 unified compare');
+  log('Task: 10-case summarization comparison (ONNX tokenizer+runtime vs Built-in AI)');
+
+  const cases = [
+    'Client-side AI can improve privacy by processing text locally, but model size and device capability strongly affect startup and runtime latency.',
+    'WebGPU often has initialization overhead, while repeated inference can become efficient once the pipeline is warmed up.',
+    'WASM is widely compatible and stable, but may show slower throughput on larger generation workloads.',
+    'Built-in AI APIs can reduce implementation complexity, though API availability may vary by browser channel and policy.',
+    'Teams should compare not only latency but also reproducibility, fallback strategy, and deployment complexity.',
+    'A practical benchmark should fix the same prompt style and output constraints across all paths.',
+    'Operational reliability often matters more than peak speed in user-facing browser applications.',
+    'Hybrid design can combine built-in AI for convenience and ONNX paths for deterministic control.',
+    'Performance interpretation must separate backend-level tests from API-level product tests.',
+    'Final architecture decisions should include quality, cost, latency, and platform coverage.'
+  ];
+
+  const onnxTimes: number[] = [];
+  let onnxOk = 0;
+  for (let i = 0; i < cases.length; i++) {
+    try {
+      const r = await runV8OnnxSingle(cases[i]);
+      onnxOk++;
+      onnxTimes.push(r.totalMs);
+      log(`✅ ONNX case ${i + 1}: ${r.totalMs.toFixed(1)}ms`);
+    } catch (e) {
+      log(`❌ ONNX case ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const builtTimes: number[] = [];
+  let builtOk = 0;
+  let builtPath = '-';
+  for (let i = 0; i < cases.length; i++) {
+    try {
+      const r = await runBuiltInAISingle(cases[i], false);
+      builtOk++;
+      builtTimes.push(r.totalMs);
+      builtPath = r.apiPath;
+      log(`✅ Built-in case ${i + 1}: ${r.totalMs.toFixed(1)}ms (${r.apiPath})`);
+    } catch (e) {
+      log(`❌ Built-in case ${i + 1}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const stat = (arr: number[]) => {
+    if (!arr.length) return { avg: 0, p95: 0 };
+    const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const s = [...arr].sort((a, b) => a - b);
+    const p95 = s[Math.max(0, Math.ceil(s.length * 0.95) - 1)];
+    return { avg, p95 };
+  };
+
+  const onnxStat = stat(onnxTimes);
+  const builtStat = stat(builtTimes);
+
+  log('--- V8 Unified Summary ---');
+  log(`ONNX summarization: success=${onnxOk}/${cases.length}, avg=${onnxStat.avg.toFixed(1)}ms, p95=${onnxStat.p95.toFixed(1)}ms`);
+  log(`Built-in summarization: success=${builtOk}/${cases.length}, avg=${builtStat.avg.toFixed(1)}ms, p95=${builtStat.p95.toFixed(1)}ms, path=${builtPath}`);
+  log('Note: Same task, different model/API layers. Use as practical-path comparison, not absolute model benchmark.');
+}
+
 async function runBenchmark() {
   out.textContent = '';
   log(`Mode: ${config.name}`);
@@ -1143,6 +1295,15 @@ if (mode === 'v7') {
   });
 }
 
+if (mode === 'v8') {
+  const v8OnnxBtn = document.querySelector<HTMLButtonElement>('#v8OnnxRun');
+  const v8BuiltBtn = document.querySelector<HTMLButtonElement>('#v8BuiltInRun');
+  const v8CompareBtn = document.querySelector<HTMLButtonElement>('#v8CompareRun');
+  v8OnnxBtn?.addEventListener('click', () => runV8OnnxSummary().catch((e) => log(`error: ${String(e)}`)));
+  v8BuiltBtn?.addEventListener('click', () => runV8BuiltInSummary().catch((e) => log(`error: ${String(e)}`)));
+  v8CompareBtn?.addEventListener('click', () => runV8UnifiedCompare().catch((e) => log(`error: ${String(e)}`)));
+}
+
 runBtn.addEventListener('click', () => {
   if (mode === 'v4') {
     runStyleTransferV4().catch((e) => log(`error: ${String(e)}`));
@@ -1160,10 +1321,14 @@ runBtn.addEventListener('click', () => {
     runUnifiedV7().catch((e) => log(`error: ${String(e)}`));
     return;
   }
+  if (mode === 'v8') {
+    runV8UnifiedCompare().catch((e) => log(`error: ${String(e)}`));
+    return;
+  }
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6' && mode !== 'v7') {
+if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6' && mode !== 'v7' && mode !== 'v8') {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 }
