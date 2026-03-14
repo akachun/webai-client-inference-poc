@@ -825,9 +825,17 @@ async function runBuiltInAIV6() {
 
     if (w.Summarizer?.create) {
       log('Using Summarizer API path...');
+      if (w.Summarizer.availability) {
+        const avail = await w.Summarizer.availability();
+        log(`Summarizer.availability: ${avail}`);
+        if (avail === 'unavailable') {
+          throw new Error('Summarizer is unavailable on this device/profile');
+        }
+      }
+
       const t0 = now();
       const summarizer = await w.Summarizer.create({
-        type: 'tl;dr',
+        type: 'tldr',
         format: 'plain-text',
         length: 'short'
       });
@@ -854,7 +862,7 @@ async function runBuiltInAIV6() {
     } else if (w.ai?.summarizer?.create) {
       log('Using legacy ai.summarizer path...');
       const t0 = now();
-      const summarizer = await w.ai.summarizer.create({ type: 'tl;dr', format: 'plain-text', length: 'short' });
+      const summarizer = await w.ai.summarizer.create({ type: 'tldr', format: 'plain-text', length: 'short' });
       const t1 = now();
       outputText = await summarizer.summarize(input);
       const t2 = now();
