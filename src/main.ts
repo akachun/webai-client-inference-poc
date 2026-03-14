@@ -235,6 +235,7 @@ const v6Extra =
     <p style="margin:4px 0 8px; color:#444;">Runs a simple Korean summary task and reports latency/availability.</p>
     <textarea id="v6Input" rows="4" style="width:100%;">클라이언트 사이드 AI PoC를 통해 WebGPU, WASM, WebNN 성능을 비교했습니다. 초기 지연은 WebGPU와 WebNN이 더 클 수 있지만, 반복 추론에서는 유리할 수 있습니다.</textarea>
     <button id="v6Run">Run Built-in AI Test</button>
+    <button id="v6Batch" style="margin-left:8px;">Run 10-case Batch Test</button>
   </div>
 `
     : '';
@@ -785,6 +786,84 @@ async function runYoloV5() {
   log('V5 ready. Click Start Camera, then Start Detection.');
 }
 
+type V6RunResult = {
+  apiPath: string;
+  createMs: number;
+  inferMs: number;
+  totalMs: number;
+  output: string;
+};
+
+function getV6ApiSurface(w: any) {
+  return {
+    LanguageModel: typeof w.LanguageModel !== 'undefined',
+    Summarizer: typeof w.Summarizer !== 'undefined',
+    Writer: typeof w.Writer !== 'undefined',
+    Rewriter: typeof w.Rewriter !== 'undefined',
+    Proofreader: typeof w.Proofreader !== 'undefined',
+    'window.ai': typeof w.ai !== 'undefined',
+    'ai.languageModel': !!w.ai?.languageModel,
+    'ai.summarizer': !!w.ai?.summarizer
+  };
+}
+
+async function runBuiltInAISingle(input: string, verbose = true): Promise<V6RunResult> {
+  const w = window as any;
+  const summarizePrompt = `다음 문장을 한국어로 2문장 이내로 요약해 주세요.\n\n${input}`;
+
+  if (w.Summarizer?.create) {
+    if (w.Summarizer.availability) {
+      const avail = await w.Summarizer.availability();
+      if (verbose) log(`Summarizer.availability: ${avail}`);
+      if (avail === 'unavailable') throw new Error('Summarizer is unavailable on this device/profile');
+    }
+    const t0 = now();
+    const summarizer = await w.Summarizer.create({ type: 'tldr', format: 'plain-text', length: 'short' });
+    const t1 = now();
+    const output = await summarizer.summarize(input);
+    const t2 = now();
+    return { apiPath: 'Summarizer', createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output };
+  }
+
+  if (w.LanguageModel?.create) {
+    const t0 = now();
+    const session = await w.LanguageModel.create();
+    const t1 = now();
+    const output = await session.prompt(summarizePrompt);
+    const t2 = now();
+    return { apiPath: 'LanguageModel', createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output };
+  }
+
+  if (w.Writer?.create) {
+    const t0 = now();
+    const writer = await w.Writer.create({ tone: 'neutral', format: 'plain-text' });
+    const t1 = now();
+    const output = await writer.write(`다음 내용을 한국어 2문장으로 요약해 주세요: ${input}`);
+    const t2 = now();
+    return { apiPath: 'Writer', createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output };
+  }
+
+  if (w.ai?.summarizer?.create) {
+    const t0 = now();
+    const summarizer = await w.ai.summarizer.create({ type: 'tldr', format: 'plain-text', length: 'short' });
+    const t1 = now();
+    const output = await summarizer.summarize(input);
+    const t2 = now();
+    return { apiPath: 'legacy ai.summarizer', createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output };
+  }
+
+  if (w.ai?.languageModel?.create) {
+    const t0 = now();
+    const session = await w.ai.languageModel.create();
+    const t1 = now();
+    const output = await session.prompt(summarizePrompt);
+    const t2 = now();
+    return { apiPath: 'legacy ai.languageModel', createMs: t1 - t0, inferMs: t2 - t1, totalMs: t2 - t0, output };
+  }
+
+  throw new Error('API surface is partially exposed, but no callable create() path found.');
+}
+
 async function runBuiltInAIV6() {
   out.textContent = '';
   const input = document.querySelector<HTMLTextAreaElement>('#v6Input')?.value?.trim() || '';
@@ -799,17 +878,7 @@ async function runBuiltInAIV6() {
 
   const w = window as any;
 
-  const apiSurface = {
-    LanguageModel: typeof w.LanguageModel !== 'undefined',
-    Summarizer: typeof w.Summarizer !== 'undefined',
-    Writer: typeof w.Writer !== 'undefined',
-    Rewriter: typeof w.Rewriter !== 'undefined',
-    Proofreader: typeof w.Proofreader !== 'undefined',
-    // legacy/older experimental surface
-    'window.ai': typeof w.ai !== 'undefined',
-    'ai.languageModel': !!w.ai?.languageModel,
-    'ai.summarizer': !!w.ai?.summarizer
-  };
+  const apiSurface = getV6ApiSurface(w);
 
   for (const [k, v] of Object.entries(apiSurface)) {
     log(`${k}: ${v ? 'yes' : 'no'}`);
@@ -822,90 +891,17 @@ async function runBuiltInAIV6() {
     return;
   }
 
-  const summarizePrompt = `다음 문장을 한국어로 2문장 이내로 요약해 주세요.\n\n${input}`;
-
   try {
-    let outputText = '';
+    const result = await runBuiltInAISingle(input, true);
 
-    if (w.Summarizer?.create) {
-      log('Using Summarizer API path...');
-      if (w.Summarizer.availability) {
-        const avail = await w.Summarizer.availability();
-        log(`Summarizer.availability: ${avail}`);
-        if (avail === 'unavailable') {
-          throw new Error('Summarizer is unavailable on this device/profile');
-        }
-      }
-
-      const t0 = now();
-      const summarizer = await w.Summarizer.create({
-        type: 'tldr',
-        format: 'plain-text',
-        length: 'short'
-      });
-      const t1 = now();
-      outputText = await summarizer.summarize(input);
-      const t2 = now();
-      log('--- V6 Result (Built-in AI) ---');
-      log(`API path: Summarizer`);
-      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
-      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
-      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
-    } else if (w.LanguageModel?.create) {
-      log('Using LanguageModel API path...');
-      const t0 = now();
-      const session = await w.LanguageModel.create();
-      const t1 = now();
-      outputText = await session.prompt(summarizePrompt);
-      const t2 = now();
-      log('--- V6 Result (Built-in AI) ---');
-      log(`API path: LanguageModel`);
-      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
-      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
-      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
-    } else if (w.Writer?.create) {
-      log('Using Writer API path...');
-      const t0 = now();
-      const writer = await w.Writer.create({ tone: 'neutral', format: 'plain-text' });
-      const t1 = now();
-      outputText = await writer.write(`다음 내용을 한국어 2문장으로 요약해 주세요: ${input}`);
-      const t2 = now();
-      log('--- V6 Result (Built-in AI) ---');
-      log(`API path: Writer`);
-      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
-      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
-      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
-    } else if (w.ai?.summarizer?.create) {
-      log('Using legacy ai.summarizer path...');
-      const t0 = now();
-      const summarizer = await w.ai.summarizer.create({ type: 'tldr', format: 'plain-text', length: 'short' });
-      const t1 = now();
-      outputText = await summarizer.summarize(input);
-      const t2 = now();
-      log('--- V6 Result (Built-in AI) ---');
-      log(`API path: legacy ai.summarizer`);
-      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
-      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
-      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
-    } else if (w.ai?.languageModel?.create) {
-      log('Using legacy ai.languageModel path...');
-      const t0 = now();
-      const session = await w.ai.languageModel.create();
-      const t1 = now();
-      outputText = await session.prompt(summarizePrompt);
-      const t2 = now();
-      log('--- V6 Result (Built-in AI) ---');
-      log(`API path: legacy ai.languageModel`);
-      log(`create latency: ${(t1 - t0).toFixed(1)}ms`);
-      log(`inference latency: ${(t2 - t1).toFixed(1)}ms`);
-      log(`total latency: ${(t2 - t0).toFixed(1)}ms`);
-    } else {
-      log('❌ API surface is partially exposed, but no callable create() path found.');
-      return;
-    }
+    log('--- V6 Result (Built-in AI) ---');
+    log(`API path: ${result.apiPath}`);
+    log(`create latency: ${result.createMs.toFixed(1)}ms`);
+    log(`inference latency: ${result.inferMs.toFixed(1)}ms`);
+    log(`total latency: ${result.totalMs.toFixed(1)}ms`);
 
     log('--- Output ---');
-    log(outputText || '(empty)');
+    log(result.output || '(empty)');
 
     log('--- Comparison Hint ---');
     log('- Compare this V6 latency with V2/V3 summary-like tasks manually.');
@@ -913,6 +909,53 @@ async function runBuiltInAIV6() {
   } catch (e) {
     log(`❌ Built-in AI execution failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+async function runBuiltInAIV6Batch() {
+  out.textContent = '';
+  const cases = [
+    '클라이언트 AI는 네트워크 없이도 일부 추론이 가능해 프라이버시와 응답성을 개선할 수 있습니다. 다만 기기 성능과 브라우저 지원 편차를 고려해야 합니다.',
+    'WASM은 호환성이 높고 안정적이지만 대규모 반복 추론에서는 GPU 계열 대비 한계가 나타날 수 있습니다.',
+    'WebGPU는 초기 준비 비용이 있지만 반복 추론에서 지연시간을 낮출 수 있는 가능성이 큽니다.',
+    'WebNN은 플랫폼 의존성이 존재하지만 일부 환경에서 매우 빠른 추론 경로를 제공할 수 있습니다.',
+    'Built-in AI는 구현 속도가 빠르지만 API 노출 여부와 기능 롤아웃 상태를 먼저 확인해야 합니다.',
+    '온디바이스 추론은 서버 비용 절감에 도움이 되지만, 모델 배포 크기와 업데이트 전략이 중요합니다.',
+    '프론트엔드 팀은 정확도뿐 아니라 지연시간, 실패율, 지원 범위를 함께 측정해야 합니다.',
+    'PoC 단계에서는 단일 성능 수치보다 재현 가능한 측정 절차를 먼저 확립하는 것이 좋습니다.',
+    '요약 태스크 비교에서는 출력 형식 제약을 동일하게 맞춰야 실사용 관점 해석이 가능합니다.',
+    '최종 도입 판단은 모델 성능보다도 운영 난이도와 사용자 경험을 함께 고려해야 합니다.'
+  ];
+
+  log('Mode: v6-batch');
+  log('Experiment: Built-in AI 10-case summarization batch');
+
+  const rows: Array<{ ok: boolean; totalMs?: number; path?: string; err?: string }> = [];
+  for (let i = 0; i < cases.length; i++) {
+    const text = cases[i];
+    try {
+      const r = await runBuiltInAISingle(text, false);
+      rows.push({ ok: true, totalMs: r.totalMs, path: r.apiPath });
+      log(`✅ case ${i + 1}: ${r.totalMs.toFixed(1)}ms (${r.apiPath})`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      rows.push({ ok: false, err: msg });
+      log(`❌ case ${i + 1}: ${msg}`);
+    }
+  }
+
+  const okRows = rows.filter((r) => r.ok && typeof r.totalMs === 'number') as Array<{ ok: true; totalMs: number; path?: string }>;
+  const successRate = (okRows.length / rows.length) * 100;
+  const avgMs = okRows.length ? okRows.reduce((a, b) => a + b.totalMs, 0) / okRows.length : 0;
+  const sorted = okRows.map((r) => r.totalMs).sort((a, b) => a - b);
+  const p95 = sorted.length ? sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] : 0;
+  const path = okRows[0]?.path ?? '-';
+
+  log('--- V6 Batch Summary ---');
+  log(`cases: ${rows.length}`);
+  log(`success: ${okRows.length}/${rows.length} (${successRate.toFixed(1)}%)`);
+  log(`api path: ${path}`);
+  log(`avg total latency: ${avgMs.toFixed(1)}ms`);
+  log(`p95 total latency: ${p95.toFixed(1)}ms`);
 }
 
 async function runBenchmark() {
@@ -996,8 +1039,12 @@ if (mode === 'v5') {
 
 if (mode === 'v6') {
   const v6RunBtn = document.querySelector<HTMLButtonElement>('#v6Run');
+  const v6BatchBtn = document.querySelector<HTMLButtonElement>('#v6Batch');
   v6RunBtn?.addEventListener('click', () => {
     runBuiltInAIV6().catch((e) => log(`error: ${String(e)}`));
+  });
+  v6BatchBtn?.addEventListener('click', () => {
+    runBuiltInAIV6Batch().catch((e) => log(`error: ${String(e)}`));
   });
 }
 
