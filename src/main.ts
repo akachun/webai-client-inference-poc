@@ -791,30 +791,42 @@ async function runBuiltInAIV6() {
 
   log('Mode: v6');
   log(`UA: ${navigator.userAgent}`);
-  log('--- Built-in AI capability probe ---');
+  log('--- Built-in AI capability probe (new API surface first) ---');
 
   const w = window as any;
-  const hasAI = typeof w.ai !== 'undefined';
-  const hasLanguageModel = !!w.ai?.languageModel;
-  const hasSummarizer = !!w.ai?.summarizer;
 
-  log(`window.ai: ${hasAI ? 'yes' : 'no'}`);
-  log(`ai.languageModel: ${hasLanguageModel ? 'yes' : 'no'}`);
-  log(`ai.summarizer: ${hasSummarizer ? 'yes' : 'no'}`);
+  const apiSurface = {
+    LanguageModel: typeof w.LanguageModel !== 'undefined',
+    Summarizer: typeof w.Summarizer !== 'undefined',
+    Writer: typeof w.Writer !== 'undefined',
+    Rewriter: typeof w.Rewriter !== 'undefined',
+    Proofreader: typeof w.Proofreader !== 'undefined',
+    // legacy/older experimental surface
+    'window.ai': typeof w.ai !== 'undefined',
+    'ai.languageModel': !!w.ai?.languageModel,
+    'ai.summarizer': !!w.ai?.summarizer
+  };
 
-  if (!hasAI || (!hasLanguageModel && !hasSummarizer)) {
+  for (const [k, v] of Object.entries(apiSurface)) {
+    log(`${k}: ${v ? 'yes' : 'no'}`);
+  }
+
+  const hasAny = Object.values(apiSurface).some(Boolean);
+  if (!hasAny) {
     log('❌ Built-in AI API not available in this environment.');
-    log('Tip: use latest Chrome and enable built-in AI related flags/origin trial if needed.');
+    log('Tip: Chrome channel/rollout, flags, and policy can affect API exposure.');
     return;
   }
+
+  const summarizePrompt = `다음 문장을 한국어로 2문장 이내로 요약해 주세요.\n\n${input}`;
 
   try {
     let outputText = '';
 
-    if (hasSummarizer) {
-      log('Using ai.summarizer path...');
+    if (w.Summarizer?.create) {
+      log('Using Summarizer API path...');
       const t0 = now();
-      const summarizer = await w.ai.summarizer.create?.({
+      const summarizer = await w.Summarizer.create({
         type: 'tl;dr',
         format: 'plain-text',
         length: 'short'
@@ -823,15 +835,41 @@ async function runBuiltInAIV6() {
       outputText = await summarizer.summarize(input);
       const t2 = now();
       log(`✅ create: ${(t1 - t0).toFixed(1)}ms, summarize: ${(t2 - t1).toFixed(1)}ms`);
-    } else {
-      log('Using ai.languageModel path...');
+    } else if (w.LanguageModel?.create) {
+      log('Using LanguageModel API path...');
       const t0 = now();
-      const session = await w.ai.languageModel.create?.();
+      const session = await w.LanguageModel.create();
       const t1 = now();
-      const prompt = `다음 문장을 한국어로 2문장 이내로 요약해 주세요.\n\n${input}`;
-      outputText = await session.prompt(prompt);
+      outputText = await session.prompt(summarizePrompt);
       const t2 = now();
       log(`✅ create: ${(t1 - t0).toFixed(1)}ms, prompt: ${(t2 - t1).toFixed(1)}ms`);
+    } else if (w.Writer?.create) {
+      log('Using Writer API path...');
+      const t0 = now();
+      const writer = await w.Writer.create({ tone: 'neutral', format: 'plain-text' });
+      const t1 = now();
+      outputText = await writer.write(`다음 내용을 한국어 2문장으로 요약해 주세요: ${input}`);
+      const t2 = now();
+      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, write: ${(t2 - t1).toFixed(1)}ms`);
+    } else if (w.ai?.summarizer?.create) {
+      log('Using legacy ai.summarizer path...');
+      const t0 = now();
+      const summarizer = await w.ai.summarizer.create({ type: 'tl;dr', format: 'plain-text', length: 'short' });
+      const t1 = now();
+      outputText = await summarizer.summarize(input);
+      const t2 = now();
+      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, summarize: ${(t2 - t1).toFixed(1)}ms`);
+    } else if (w.ai?.languageModel?.create) {
+      log('Using legacy ai.languageModel path...');
+      const t0 = now();
+      const session = await w.ai.languageModel.create();
+      const t1 = now();
+      outputText = await session.prompt(summarizePrompt);
+      const t2 = now();
+      log(`✅ create: ${(t1 - t0).toFixed(1)}ms, prompt: ${(t2 - t1).toFixed(1)}ms`);
+    } else {
+      log('❌ API surface is partially exposed, but no callable create() path found.');
+      return;
     }
 
     log('--- Output ---');
