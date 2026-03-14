@@ -312,11 +312,28 @@ const v9Extra =
     ? `
   <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
     <p><strong>V9 Demo:</strong> Built-in AI practical bundle (3 use cases)</p>
-    <textarea id="v9Input" rows="5" style="width:100%;">The team reviewed browser-side AI options to reduce server load and improve privacy. We need a practical plan that balances latency, compatibility, and implementation complexity across different user devices.</textarea>
+    <textarea id="v9Input" rows="8" style="width:100%;">Meeting Minutes (English)
+Date: 2026-03-14
+Topic: Client-side AI benchmark plan for the web app
+
+Discussion Summary:
+- We agreed to compare ONNX runtime paths (WASM, WebGPU, WebNN) with Chrome Built-in AI APIs.
+- We observed that WebGPU has higher initialization cost but better repeated inference in some cases.
+- We confirmed that Built-in Summarizer API works on selected Chrome environments.
+
+Planned Test Tasks:
+1) Latency test: measure create latency, inference latency, and p95 for 10 fixed inputs.
+2) Reliability test: run each path 20 times and record success/failure reasons.
+3) UX test: evaluate readability and usefulness of generated summaries.
+4) Compatibility test: verify behavior on desktop and mobile Chrome.
+
+Decisions:
+- Publish PoC v9 with three demos: summarize, action plan generation, and detect+translate.
+- Prepare a comparison table for the upcoming IT trend column.</textarea>
     <div style="margin-top:8px;">
-      <button id="v9Summarize">1) Summarize</button>
-      <button id="v9Prompt" style="margin-left:8px;">2) Prompt/Write</button>
-      <button id="v9Translate" style="margin-left:8px;">3) Detect + Translate</button>
+      <button id="v9Summarize">1) Summarize Minutes</button>
+      <button id="v9Prompt" style="margin-left:8px;">2) Generate Action Plan</button>
+      <button id="v9Translate" style="margin-left:8px;">3) Translate Minutes (KO)</button>
       <button id="v9RunAll" style="margin-left:8px;">Run All</button>
     </div>
   </div>
@@ -1240,8 +1257,8 @@ async function runV9Summarize(input: string) {
 
 async function runV9Prompt(input: string) {
   const w = window as any;
-  const prompt = `Write a concise 2-sentence action plan based on this text:\n\n${input}`;
-  log('--- V9 Prompt/Write ---');
+  const prompt = `Based on the following meeting minutes, generate a practical action plan with 5 bullet points. Each bullet must include: owner role, task, and expected outcome.\n\n${input}`;
+  log('--- V9 Action Plan (Prompt/Write) ---');
 
   try {
     if (w.LanguageModel?.create) {
