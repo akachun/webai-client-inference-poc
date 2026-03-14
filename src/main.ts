@@ -1,7 +1,7 @@
 import * as ort from 'onnxruntime-web/all';
 
 type Provider = 'webgpu' | 'wasm' | 'webnn';
-type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6' | 'v7' | 'v8';
+type Mode = 'v1' | 'v2' | 'v3' | 'v4' | 'v5' | 'v6' | 'v7' | 'v8' | 'v9';
 
 type BenchResult = {
   provider: Provider;
@@ -128,6 +128,18 @@ const V8_CONFIG: BenchConfig = {
   providers: ['wasm']
 };
 
+const V9_CONFIG: BenchConfig = {
+  name: 'v9',
+  description: 'Built-in AI use-case bundle: summarize, prompt, detect+translate',
+  modelUrl: '/mnist-8.onnx',
+  inputFallbackDims: [1, 1, 28, 28],
+  warmupRuns: 0,
+  measuredRuns: 1,
+  createTimeoutMs: 12000,
+  runTimeoutMs: 12000,
+  providers: ['wasm']
+};
+
 const V3_WORKLOADS = [1, 4, 8, 16];
 
 const YOLO_CLASSES = [
@@ -166,6 +178,7 @@ type Detection = {
 
 function getModeFromPath(): Mode {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('/v9')) return 'v9';
   if (path.includes('/v8')) return 'v8';
   if (path.includes('/v7')) return 'v7';
   if (path.includes('/v6')) return 'v6';
@@ -184,6 +197,7 @@ function getConfig(mode: Mode): BenchConfig {
   if (mode === 'v6') return V6_CONFIG;
   if (mode === 'v7') return V7_CONFIG;
   if (mode === 'v8') return V8_CONFIG;
+  if (mode === 'v9') return V9_CONFIG;
   return V1_CONFIG;
 }
 
@@ -293,6 +307,22 @@ const v8Extra =
 `
     : '';
 
+const v9Extra =
+  mode === 'v9'
+    ? `
+  <div style="margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px;">
+    <p><strong>V9 Demo:</strong> Built-in AI practical bundle (3 use cases)</p>
+    <textarea id="v9Input" rows="5" style="width:100%;">The team reviewed browser-side AI options to reduce server load and improve privacy. We need a practical plan that balances latency, compatibility, and implementation complexity across different user devices.</textarea>
+    <div style="margin-top:8px;">
+      <button id="v9Summarize">1) Summarize</button>
+      <button id="v9Prompt" style="margin-left:8px;">2) Prompt/Write</button>
+      <button id="v9Translate" style="margin-left:8px;">3) Detect + Translate</button>
+      <button id="v9RunAll" style="margin-left:8px;">Run All</button>
+    </div>
+  </div>
+`
+    : '';
+
 app.innerHTML = `
   <h1>WebAI Client Inference PoC (${config.name.toUpperCase()})</h1>
   <p>${config.description}</p>
@@ -309,6 +339,7 @@ app.innerHTML = `
     <a href="${baseUrl}v6">/v6</a> |
     <a href="${baseUrl}v7">/v7</a> |
     <a href="${baseUrl}v8">/v8</a> |
+    <a href="${baseUrl}v9">/v9</a> |
     <a href="${window.location.pathname}?autorun=1">autorun</a>
   </p>
   ${v4Extra}
@@ -316,6 +347,7 @@ app.innerHTML = `
   ${v6Extra}
   ${v7Extra}
   ${v8Extra}
+  ${v9Extra}
   <button id="run">Run Benchmark (${config.name.toUpperCase()})</button>
   <pre id="out"></pre>
 `;
@@ -1198,6 +1230,96 @@ async function runV8UnifiedCompare() {
   log('Note: Same task, different model/API layers. Use as practical-path comparison, not absolute model benchmark.');
 }
 
+async function runV9Summarize(input: string) {
+  const r = await runBuiltInAISingle(input, true);
+  log('--- V9 Summarize ---');
+  log(`path: ${r.apiPath}`);
+  log(`latency(total): ${r.totalMs.toFixed(1)}ms`);
+  log(r.output || '(empty)');
+}
+
+async function runV9Prompt(input: string) {
+  const w = window as any;
+  const prompt = `Write a concise 2-sentence action plan based on this text:\n\n${input}`;
+  log('--- V9 Prompt/Write ---');
+
+  try {
+    if (w.LanguageModel?.create) {
+      const t0 = now();
+      const session = await w.LanguageModel.create();
+      const t1 = now();
+      const output = await session.prompt(prompt);
+      const t2 = now();
+      log(`path: LanguageModel`);
+      log(`latency(total): ${(t2 - t0).toFixed(1)}ms`);
+      log(output || '(empty)');
+      return;
+    }
+
+    if (w.Writer?.create) {
+      const t0 = now();
+      const writer = await w.Writer.create({ tone: 'neutral', format: 'plain-text' });
+      const t1 = now();
+      const output = await writer.write(prompt);
+      const t2 = now();
+      log(`path: Writer`);
+      log(`latency(total): ${(t2 - t0).toFixed(1)}ms`);
+      log(output || '(empty)');
+      return;
+    }
+
+    throw new Error('LanguageModel/Writer API not available');
+  } catch (e) {
+    log(`❌ prompt/write failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function pickDetectedLanguage(item: any): string {
+  return item?.detectedLanguage || item?.language || item?.lang || 'unknown';
+}
+
+async function runV9DetectTranslate(input: string) {
+  const w = window as any;
+  log('--- V9 Detect + Translate ---');
+
+  try {
+    if (!w.LanguageDetector?.create || !w.Translator?.create) {
+      throw new Error('LanguageDetector/Translator API not available');
+    }
+
+    const t0 = now();
+    const detector = await w.LanguageDetector.create();
+    const detections = await detector.detect(input);
+    const top = Array.isArray(detections) ? detections[0] : detections;
+    const sourceLang = pickDetectedLanguage(top);
+
+    const translator = await w.Translator.create({
+      sourceLanguage: sourceLang,
+      targetLanguage: 'ko'
+    });
+    const translated = await translator.translate(input);
+    const t1 = now();
+
+    log(`detected language: ${sourceLang}`);
+    log(`latency(total): ${(t1 - t0).toFixed(1)}ms`);
+    log(translated || '(empty)');
+  } catch (e) {
+    log(`❌ detect+translate failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function runV9All() {
+  out.textContent = '';
+  const input = document.querySelector<HTMLTextAreaElement>('#v9Input')?.value?.trim() || '';
+  log('Mode: v9');
+  log(`Input length: ${input.length} chars`);
+  log('Use cases: summarize / prompt-write / detect-translate');
+
+  await runV9Summarize(input);
+  await runV9Prompt(input);
+  await runV9DetectTranslate(input);
+}
+
 async function runBenchmark() {
   out.textContent = '';
   log(`Mode: ${config.name}`);
@@ -1304,6 +1426,27 @@ if (mode === 'v8') {
   v8CompareBtn?.addEventListener('click', () => runV8UnifiedCompare().catch((e) => log(`error: ${String(e)}`)));
 }
 
+if (mode === 'v9') {
+  const inputEl = document.querySelector<HTMLTextAreaElement>('#v9Input');
+  const getInput = () => inputEl?.value?.trim() || '';
+
+  document.querySelector<HTMLButtonElement>('#v9Summarize')?.addEventListener('click', () => {
+    out.textContent = '';
+    runV9Summarize(getInput()).catch((e) => log(`error: ${String(e)}`));
+  });
+  document.querySelector<HTMLButtonElement>('#v9Prompt')?.addEventListener('click', () => {
+    out.textContent = '';
+    runV9Prompt(getInput()).catch((e) => log(`error: ${String(e)}`));
+  });
+  document.querySelector<HTMLButtonElement>('#v9Translate')?.addEventListener('click', () => {
+    out.textContent = '';
+    runV9DetectTranslate(getInput()).catch((e) => log(`error: ${String(e)}`));
+  });
+  document.querySelector<HTMLButtonElement>('#v9RunAll')?.addEventListener('click', () => {
+    runV9All().catch((e) => log(`error: ${String(e)}`));
+  });
+}
+
 runBtn.addEventListener('click', () => {
   if (mode === 'v4') {
     runStyleTransferV4().catch((e) => log(`error: ${String(e)}`));
@@ -1325,10 +1468,14 @@ runBtn.addEventListener('click', () => {
     runV8UnifiedCompare().catch((e) => log(`error: ${String(e)}`));
     return;
   }
+  if (mode === 'v9') {
+    runV9All().catch((e) => log(`error: ${String(e)}`));
+    return;
+  }
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6' && mode !== 'v7' && mode !== 'v8') {
+if (params.get('autorun') === '1' && mode !== 'v4' && mode !== 'v5' && mode !== 'v6' && mode !== 'v7' && mode !== 'v8' && mode !== 'v9') {
   runBenchmark().catch((e) => log(`error: ${String(e)}`));
 }
