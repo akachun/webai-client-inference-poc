@@ -314,22 +314,22 @@ const v9Extra =
     <p><strong>V9 Demo:</strong> Built-in AI practical bundle (3 use cases)</p>
     <textarea id="v9Input" rows="8" style="width:100%;">Meeting Minutes (English)
 Date: 2026-03-14
-Topic: Client-side AI benchmark plan for the web app
+Topic: Mobile shopping app checkout performance review
 
 Discussion Summary:
-- We agreed to compare ONNX runtime paths (WASM, WebGPU, WebNN) with Chrome Built-in AI APIs.
-- We observed that WebGPU has higher initialization cost but better repeated inference in some cases.
-- We confirmed that Built-in Summarizer API works on selected Chrome environments.
+- The team reviewed increased checkout drop-offs on mobile devices during peak hours.
+- Backend logs indicate intermittent payment API latency spikes above 2.5 seconds.
+- UX recordings show users abandoning the flow when address validation takes too long.
 
-Planned Test Tasks:
-1) Latency test: measure create latency, inference latency, and p95 for 10 fixed inputs.
-2) Reliability test: run each path 20 times and record success/failure reasons.
-3) UX test: evaluate readability and usefulness of generated summaries.
-4) Compatibility test: verify behavior on desktop and mobile Chrome.
+Planned Action Items:
+1) Run load tests for payment and address services under 3x peak traffic.
+2) Add client-side timeout handling and user-friendly retry messages.
+3) Prioritize caching for shipping options and coupon validation responses.
+4) Define KPI targets: checkout completion rate, p95 response time, and error rate.
 
 Decisions:
-- Publish PoC v9 with three demos: summarize, action plan generation, and detect+translate.
-- Prepare a comparison table for the upcoming IT trend column.</textarea>
+- Launch a two-week optimization sprint with daily KPI monitoring.
+- Share a weekly status update with product, engineering, and operations teams.</textarea>
     <div style="margin-top:8px;">
       <button id="v9Summarize">1) Summarize Minutes</button>
       <button id="v9Prompt" style="margin-left:8px;">2) Generate Action Plan</button>
@@ -374,6 +374,16 @@ const runBtn = document.querySelector<HTMLButtonElement>('#run')!;
 
 function log(msg: string) {
   out.textContent += `${msg}\n`;
+}
+
+function prettyText(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/\s*•\s*/g, '\n• ')
+    .replace(/\s*-\s+/g, '\n- ')
+    .replace(/\s*(\d+\.)\s+/g, '\n$1 ')
+    .replace(/\.\s+(?=[A-Z])/g, '.\n')
+    .trim();
 }
 
 function now() {
@@ -1252,7 +1262,7 @@ async function runV9Summarize(input: string) {
   log('--- V9 Summarize ---');
   log(`path: ${r.apiPath}`);
   log(`latency(total): ${r.totalMs.toFixed(1)}ms`);
-  log(r.output || '(empty)');
+  log(prettyText(r.output || '(empty)'));
 }
 
 async function runV9Prompt(input: string) {
@@ -1269,7 +1279,7 @@ async function runV9Prompt(input: string) {
       const t2 = now();
       log(`path: LanguageModel`);
       log(`latency(total): ${(t2 - t0).toFixed(1)}ms`);
-      log(output || '(empty)');
+      log(prettyText(output || '(empty)'));
       return;
     }
 
@@ -1281,7 +1291,7 @@ async function runV9Prompt(input: string) {
       const t2 = now();
       log(`path: Writer`);
       log(`latency(total): ${(t2 - t0).toFixed(1)}ms`);
-      log(output || '(empty)');
+      log(prettyText(output || '(empty)'));
       return;
     }
 
@@ -1319,7 +1329,7 @@ async function runV9DetectTranslate(input: string) {
 
     log(`detected language: ${sourceLang}`);
     log(`latency(total): ${(t1 - t0).toFixed(1)}ms`);
-    log(translated || '(empty)');
+    log(prettyText(translated || '(empty)'));
   } catch (e) {
     log(`❌ detect+translate failed: ${e instanceof Error ? e.message : String(e)}`);
   }
